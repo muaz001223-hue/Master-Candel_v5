@@ -1,0 +1,28 @@
+{
+  "date": "2026-09-24",
+  "scope": "Repository setup and feasible continuation without redesign",
+  "backend_regression": {"passed": 27, "failed": 0, "source": "iteration_1.json and pytest/pytest_results.xml"},
+  "initial_frontend_issue": "Original mobile sidebar and menu both hidden",
+  "fix": "Original menu button restored; accessible mobile navigation dialog links all five workspace routes",
+  "post_fix_checks": {
+    "mobile_signals_navigation": "PASS",
+    "mobile_analytics_navigation": "PASS",
+    "mobile_flow_navigation": "PASS",
+    "mobile_logs_navigation": "PASS",
+    "mobile_settings_navigation": "PASS",
+    "document_overflow_320_390_768": "PASS",
+    "desktop_original_terminal": "PASS",
+    "demo_server_saved_5second_trade": "PASS",
+    "requirements_install_dry_run": "PASS",
+    "frontend_production_build": "PASS",
+    "eslint_engine_and_checks": "PASS",
+    "oxlint": "PASS: zero errors, three existing shared UI fast-refresh warnings"
+  },
+  "known_scope_limits": [
+    "Actual authorized QX browser DOM compatibility unverified",
+    "500-agent source unavailable; 0 implemented",
+    "No trained/calibrated predictive model or hidden-algorithm detector",
+    "Demo quotes, payouts and outcomes intentionally simulated; real Mongo persistence",
+    "No real-money execution"
+  ]
+}

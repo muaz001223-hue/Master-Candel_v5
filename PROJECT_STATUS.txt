@@ -1,0 +1,35 @@
+MASTER CANDLE — CURRENT CHECKPOINT, 2026-09-24
+
+USER: Clone/setup methomia913-glitch/Master-Candel-Main, preserve same UI,
+inspect README/TXT and finish feasible incomplete work. "100% same vaba banan".
+
+RUNNING: React19/TS/Vite8/Tailwind4 frontend, FastAPI backend, MongoDB.
+Original Home/Trade layout preserved. Public Deriv real ticks/candles connected.
+Protected Mongo URL/database and current frontend backend URL retained.
+
+ADDED/FIXED:
+- Dependency conflict removed, CRA-template conflicts removed; yarn build passes.
+- Server-owned Mongo demo ledger, private browser session, idempotent actions,
+  concurrent balance safety, scheduled/expiry trades, reset archival history.
+- Signals/Analytics/Flow/Logs/Settings routes with actual APIs, CSV, observer ZIP.
+- Mobile menu now exposes all five routes without document overflow.
+- Fresh observer key, current-origin extension permissions, env examples/setup.
+- Git ignores all real environment/credential files. Do not publish secrets.
+- Imported296archival candles+2signals into UNVERIFIED collections only.
+
+VERIFICATION:
+27/27 backend tests passed. Desktop Home/Trade and new pages passed.
+Testing agent found mobile nav hidden; fixed with working existing-menu entry.
+Self-check all5routes at390px and overflow at320/390/768px PASS.
+Reports: test_reports/iteration_1.json, test_reports/final_verification.json.
+
+NOT COMPLETE / DO NOT FABRICATE:
+500specialized agents missing from original source;0implemented.
+No trained/calibrated model, no verified broker algorithm detection.
+Failclosed NO_SIGNAL retained. No guaranteed predictions or real execution.
+QX live DOM compatibility unverified until authorized browser is connected.
+Trade quotes/results remain SIMULATED virtual funds, not live evidence.
+
+NEXT: authorized observer DOM verification; missing agent source or approved
+replacement spec; outcome dataset/training/OOS validation; dynamic catalog.
+See README.md for setup/API, memory/PRD.md for requirements/backlog.

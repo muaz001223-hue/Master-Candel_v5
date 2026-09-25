@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Market-QX Visible Market Observer v2",
+  "version": "1.1.0",
+  "description": "Forwards explicitly visible market fields to your configured Master Candle backend.",
+  "permissions": [
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://market-qx.info/*",
+    "https://*.quotex.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://candel-deploy.preview.emergentagent.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://market-qx.info/*",
+        "https://*.quotex.com/*"
+      ],
+      "js": [
+        "parser.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html",
+  "action": {
+    "default_title": "Observer connection settings"
+  }
+}

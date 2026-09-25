@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Market-QX Visible Market Observer v2",
+  "version": "1.0.0",
+  "description": "Reads only visible market fields from configured trading-page DOM elements and forwards validated observations to a local backend.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": [
+    "https://market-qx.info/*",
+    "https://*.quotex.com/*",
+    "http://localhost:4000/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://market-qx.info/*",
+        "https://*.quotex.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Market-QX Visible Observer v2"
+  }
+}

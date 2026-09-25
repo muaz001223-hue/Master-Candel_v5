@@ -54,7 +54,7 @@ async def lifespan(app):
 app = FastAPI(title='Master Candle market backend', lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=ORIGINS, allow_credentials=False, allow_methods=['GET', 'POST', 'OPTIONS'], allow_headers=['Content-Type', 'X-Market-QX-Key'])
 app.include_router(market_router(store, deriv, analysis))
-app.include_router(observation_router(store))
+app.include_router(observation_router(store, postgres))
 app.include_router(download_router)
 app.include_router(demo_router(db))
 

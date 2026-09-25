@@ -8,7 +8,7 @@ from market_models import ObservedPairs, ObservedTick, ObservedCandle, Document,
 SOURCE = 'market-qx-observer-v2'
 
 
-def observation_router(store):
+def observation_router(store, postgres=None):
     router = APIRouter(prefix='/api/v1/observation', dependencies=[Depends(require_observer_key)])
     # Serialize receipts through processing; retries are idempotent even after worker restarts.
     lock = asyncio.Lock()
@@ -32,11 +32,15 @@ def observation_router(store):
                     await store.instrument(SOURCE, body.symbol, body.symbol, available=True, provenance='BROWSER_OBSERVED_UNVERIFIED', session_id=body.session_id)
                 try:
                     if kind == 'tick':
-                        await store.tick(SOURCE, body.symbol, body.price, epoch(body.timestamp), 'VISIBLE_DOM_RECEIPT_TIME')
+                        stored = await store.tick(SOURCE, body.symbol, body.price, epoch(body.timestamp), 'VISIBLE_DOM_RECEIPT_TIME')
+                        if stored and postgres is not None:
+                            postgres.mirror_tick(SOURCE, body.symbol, body.price, epoch(body.timestamp), 'VISIBLE_DOM_RECEIPT_TIME', body.session_id, body.dedupe_id)
                     else:
                         candle = store.candle(SOURCE, body.symbol, body.timeframe, epoch(body.timestamp), body.open, body.high, body.low, body.close, method='VISIBLE_DOM_OHLC', completeness='OBSERVED_UNVERIFIED')
                         candle['volume'] = body.volume
                         await store.save_candles([candle])
+                        if postgres is not None:
+                            postgres.mirror_candle(candle, body.session_id, body.dedupe_id)
                         await store.db.market_instruments.update_one({'source': SOURCE, 'symbol': body.symbol, '$or': [{'latestEpoch': {'$lte': epoch(body.closeTimestamp)}}, {'latestEpoch': {'$exists': False}}]}, {'$set': {'latestEpoch': epoch(body.closeTimestamp), 'latestPrice': body.close, 'method': 'VISIBLE_DOM_OHLC'}})
                 except ValueError as exc:
                     raise HTTPException(422, str(exc)) from exc

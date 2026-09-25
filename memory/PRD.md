@@ -87,3 +87,10 @@ Connect authorized observer tab, collect missing agent source, then scope datase
 - Only deviations (user-approved): removed `@emergentbase/*` dev plugins from `frontend/vite.config.ts` + `package.json`, deleted stale `frontend/public/index.html`; added optional `backend/postgres_service.py` (asyncpg, Neon `DATABASE_URL`) reported in `/api/health`.
 - `.env`: protected MONGO_URL / REACT_APP_BACKEND_URL kept; user's full variable set appended; `DEV_PORT=3000`; runtime keys generated via `scripts/setup_runtime.py`; extension manifest regenerated via `backend/configure_extension.py`; legacy SQLite imported via `backend/import_legacy.py`.
 - Verified: pytest 27/27, backend testing agent 21/22 (the one "fail" was an invalid test pairId, expected 422), Deriv 32/32 symbols DATA_RECEIVING, PostgreSQL CONNECTED, observer key auth OK.
+
+## Iteration 2 (user-selected items)
+- Extension live test: guide at `extensions/market-qx-observer-v2/LIVE_TEST_GUIDE.md`; transport contract verified end to end by simulation (pairs → tick → event → DATA_RECEIVING → Home OBSERVING → LIVE OTC chart).
+- Postgres mirror: `observer_ticks` / `observer_candles` tables (Neon), non-blocking mirror from `observation_routes.py`; counts in `/api/health` → `postgres.mirror`.
+- Feed health banner: `components/terminal/FeedHealthBanner.tsx` mounted in `App.tsx`; shows when Deriv/observer `STALE` (>30s) or backend unreachable; dismiss + re-check.
+- `/api/v1/observation` now returns `ageSeconds` + `freshnessSeconds`.
+- Tests: pytest 27/27, backend agent 14/14, frontend agent 6/6 scenarios (desktop + 390px mobile).

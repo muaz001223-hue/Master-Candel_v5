@@ -12,7 +12,8 @@ def market_router(store, deriv, analysis):
         status = await store.db.observer_status.find_one({'id': 'current'}, {'_id': 0})
         if not status:
             return {'source': 'market-qx-observer-v2', 'state': 'WAITING_FOR_EXTENSION'}
-        return {**status, 'source': 'market-qx-observer-v2', 'state': 'DATA_RECEIVING' if time.time() - status['lastReceived'] < FRESHNESS else 'STALE', 'verification': 'UNVERIFIED_BROWSER_OBSERVATION'}
+        age = time.time() - status['lastReceived']
+        return {**status, 'source': 'market-qx-observer-v2', 'state': 'DATA_RECEIVING' if age < FRESHNESS else 'STALE', 'ageSeconds': age, 'freshnessSeconds': FRESHNESS, 'verification': 'UNVERIFIED_BROWSER_OBSERVATION'}
 
     @router.get('/runtime', response_model=Document)
     async def runtime():

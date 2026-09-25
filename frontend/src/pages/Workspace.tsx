@@ -4,6 +4,9 @@ import { ArrowLeft, Download, RefreshCw, Activity, BarChart3, GitBranch, Setting
 import Brand from '@/components/terminal/Brand';
 import { Button } from '@/components/ui/button';
 import { apiGet } from '@/lib/api';
+import PostgresAnalytics from '@/components/terminal/PostgresAnalytics';
+import MirrorSettings from '@/components/terminal/MirrorSettings';
+import AlertPreferences from '@/components/terminal/AlertPreferences';
 import './workspace.css';
 
 const views = {
@@ -41,6 +44,8 @@ export default function Workspace() {
         <div className="workspace-heading"><div><p data-testid="workspace-subtitle">{view.subtitle}</p><h1 data-testid="workspace-title">{view.title}</h1></div><div className="workspace-actions"><Button data-testid="workspace-refresh" variant="ghost" disabled={query.isFetching} onClick={() => void query.refetch()} aria-label="Refresh data"><RefreshCw size={16} /></Button><Button data-testid="workspace-export" variant="ghost" disabled={!rows?.length} onClick={exportRows}><Download size={16} /> CSV</Button></div></div>
         {key === 'settings' && <div className="workspace-summary" data-testid="workspace-runtime-summary"><span>Database <b data-testid="workspace-database">{display(data?.database)}</b></span><span>Received ticks <b data-testid="workspace-ticks">{display(data?.ticksReceived)}</b></span><span>Analysis cycles <b data-testid="workspace-cycles">{display(data?.analysisCycles)}</b></span><a data-testid="observer-download-link" className="workspace-download" href={`${process.env.REACT_APP_BACKEND_URL}/api/v1/observer/download`}><Download size={16} /> Observer extension</a></div>}
         {query.isLoading ? <p data-testid="workspace-loading" className="workspace-empty">Loading…</p> : query.isError ? <p role="alert" data-testid="workspace-error" className="workspace-empty">Connection unavailable. Please refresh.</p> : <div className="workspace-table-wrap"><table data-testid="workspace-table"><thead><tr>{columns.map(([field, title]) => <th key={field} data-testid={`workspace-heading-${field}`}>{title}</th>)}</tr></thead><tbody>{rows?.map((row, index) => <tr key={index} data-testid={`workspace-row-${index}`}>{columns.map(([field]) => <td data-testid={`workspace-cell-${index}-${field}`} key={field}>{display(row[field])}</td>)}</tr>)}</tbody></table>{!rows?.length && <p data-testid="workspace-empty" className="workspace-empty">{key === 'analytics' ? 'No fresh instruments meet the quality threshold.' : 'No records available yet.'}</p>}</div>}
+        {key === 'analytics' && <PostgresAnalytics />}
+        {key === 'settings' && <><MirrorSettings /><AlertPreferences /></>}
         <footer className="terminal-footer"><span data-testid="workspace-disclaimer">ANALYTICAL ONLY · NO REAL TRADES</span><span data-testid="workspace-row-count">{rows?.length || 0} records</span></footer>
       </main>
     </div>

@@ -17,6 +17,9 @@ class MarketStore:
         self.locks = {}
         self.last_ticks = {}
         self.tick_count = 0
+        # Optional secondary mirror (PostgreSQL). Only provider sources are mirrored here;
+        # browser observations are mirrored by observation_routes with dedupe keys.
+        self.mirror = None
 
     async def initialize(self):
         for name, keys in [('market_instruments', ['source', 'symbol']), ('market_candles', ['source', 'symbol', 'timeframe', 'epoch']), ('market_analyses', ['source', 'symbol', 'timeframe']), ('observer_receipts', ['session_id', 'dedupe_id']), ('signal_history', ['source', 'symbol', 'timeframe', 'candleEpoch'])]:
@@ -48,6 +51,8 @@ class MarketStore:
             operations.append(UpdateOne(key, {'$set': candle}, upsert=True))
         if operations:
             await self.db.market_candles.bulk_write(operations, ordered=False)
+            if self.mirror is not None:
+                self.mirror.queue_candles([c for c in candles if c['source'] == 'deriv'])
 
     async def tick(self, source, symbol, price, timestamp, method):
         if not math.isfinite(price) or price <= 0 or not math.isfinite(timestamp) or timestamp > time.time() + 2 or time.time() - timestamp > FRESHNESS:
@@ -74,6 +79,8 @@ class MarketStore:
             await self.db.market_instruments.update_one({'source': source, 'symbol': symbol}, {'$set': {'latestPrice': price, 'latestEpoch': timestamp, 'method': method}})
             self.last_ticks[key] = (timestamp, price)
             self.tick_count += 1
+            if self.mirror is not None and source == 'deriv':
+                self.mirror.queue_tick(source, symbol, price, timestamp, method)
             return True
 
     async def candles(self, source, symbol, timeframe, limit=300):

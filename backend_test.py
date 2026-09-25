@@ -1,569 +1,778 @@
 #!/usr/bin/env python3
-"""
-Backend API Testing for Master Candle FastAPI App
-Tests all backend endpoints as specified in the review request.
-"""
-
-import requests
+"""Backend testing for PostgreSQL mirror features - Master Candle FastAPI app"""
+import subprocess
 import json
 import time
-from datetime import datetime, timezone
-from uuid import uuid4
-import zipfile
-from io import BytesIO
+import sys
+import os
+from datetime import datetime
 
-# Read backend URL from frontend/.env
-with open('/app/frontend/.env', 'r') as f:
-    for line in f:
-        if line.startswith('REACT_APP_BACKEND_URL='):
-            BACKEND_URL = line.split('=', 1)[1].strip()
-            break
+# Configuration
+BACKEND_URL = "https://candel-deploy.preview.emergentagent.com/api"
+OBSERVER_KEY = "pjmB2giJPIdWLD2JC2lO-PMdKhhJnUGnu0-QVVdZuqwwqizE9fWmLSEHl1MP4f4R"
 
-# Read observer service key from backend/.env
-with open('/app/backend/.env', 'r') as f:
-    for line in f:
-        if line.startswith('OBSERVER_SERVICE_KEY='):
-            OBSERVER_KEY = line.split('=', 1)[1].strip().strip('"')
-            break
+def curl_get(endpoint, headers=None):
+    """Execute curl GET request"""
+    cmd = ["curl", "-s", "-w", "\\n%{http_code}", f"{BACKEND_URL}{endpoint}"]
+    if headers:
+        for key, value in headers.items():
+            cmd.extend(["-H", f"{key}: {value}"])
+    
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    output = result.stdout.strip()
+    lines = output.rsplit('\n', 1)
+    
+    if len(lines) == 2:
+        body, status_code = lines
+        return int(status_code), body
+    return 0, output
 
-print(f"Testing backend at: {BACKEND_URL}")
-print(f"Observer key: {OBSERVER_KEY[:20]}...")
-print("=" * 80)
+def curl_post(endpoint, data=None, headers=None):
+    """Execute curl POST request"""
+    cmd = ["curl", "-s", "-w", "\\n%{http_code}", "-X", "POST", f"{BACKEND_URL}{endpoint}"]
+    
+    if headers:
+        for key, value in headers.items():
+            cmd.extend(["-H", f"{key}: {value}"])
+    
+    if data:
+        cmd.extend(["-H", "Content-Type: application/json", "-d", json.dumps(data)])
+    
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    output = result.stdout.strip()
+    lines = output.rsplit('\n', 1)
+    
+    if len(lines) == 2:
+        body, status_code = lines
+        return int(status_code), body
+    return 0, output
 
-# Test results tracking
-test_results = []
-failed_tests = []
-
-def test(name, func):
-    """Run a test and track results"""
-    print(f"\n{'='*80}")
-    print(f"TEST: {name}")
-    print(f"{'='*80}")
+def test_1_mirror_status_and_live_stream():
+    """Test 1: GET /api/v1/postgres/mirror - status and live stream verification"""
+    print("\n" + "="*80)
+    print("TEST 1: GET /api/v1/postgres/mirror - Status and Live Stream")
+    print("="*80)
+    
+    # Initial GET
+    status, body = curl_get("/v1/postgres/mirror")
+    print(f"Status: {status}")
+    
+    if status != 200:
+        print(f"❌ FAILED: Expected 200, got {status}")
+        print(f"Response: {body}")
+        return False
+    
     try:
-        func()
-        test_results.append((name, "PASS"))
-        print(f"✅ PASS: {name}")
-    except AssertionError as e:
-        test_results.append((name, "FAIL"))
-        failed_tests.append((name, str(e)))
-        print(f"❌ FAIL: {name}")
-        print(f"   Error: {e}")
-    except Exception as e:
-        test_results.append((name, "ERROR"))
-        failed_tests.append((name, f"Exception: {e}"))
-        print(f"❌ ERROR: {name}")
-        print(f"   Exception: {e}")
-
-# ============================================================================
-# TEST 1: Health Endpoint
-# ============================================================================
-def test_health():
-    """GET /api/health → 200, database "connected", postgres.state must be "CONNECTED" (enabled true)"""
-    response = requests.get(f"{BACKEND_URL}/api/health", timeout=10)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {json.dumps(response.json(), indent=2)}")
+        data = json.loads(body)
+        print(f"Response: {json.dumps(data, indent=2)}")
+    except json.JSONDecodeError as e:
+        print(f"❌ FAILED: Invalid JSON response: {e}")
+        print(f"Body: {body}")
+        return False
     
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    data = response.json()
-    assert data.get('database') == 'connected', f"Expected database='connected', got {data.get('database')}"
+    # Verify required fields
+    checks = [
+        ("enabled", True, data.get("enabled")),
+        ("state", "CONNECTED", data.get("state")),
+    ]
     
-    postgres = data.get('postgres', {})
-    assert postgres.get('enabled') == True, f"Expected postgres.enabled=true, got {postgres.get('enabled')}"
-    assert postgres.get('state') == 'CONNECTED', f"Expected postgres.state='CONNECTED', got {postgres.get('state')}"
-
-test("1. Health Endpoint", test_health)
-
-# ============================================================================
-# TEST 2: Root Endpoint
-# ============================================================================
-def test_root():
-    """GET /api/ → message string"""
-    response = requests.get(f"{BACKEND_URL}/api/", timeout=10)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {json.dumps(response.json(), indent=2)}")
+    failed = False
+    for field, expected, actual in checks:
+        if actual != expected:
+            print(f"❌ FAILED: {field} expected {expected}, got {actual}")
+            failed = True
+        else:
+            print(f"✅ {field}: {actual}")
     
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    data = response.json()
-    assert 'message' in data, "Expected 'message' field in response"
-    assert isinstance(data['message'], str), "Expected message to be a string"
-
-test("2. Root Endpoint", test_root)
-
-# ============================================================================
-# TEST 3: Runtime Endpoint
-# ============================================================================
-def test_runtime():
-    """GET /api/v1/runtime → providers[] contains source "deriv" with state DATA_RECEIVING and acceptedCount >= 30"""
-    response = requests.get(f"{BACKEND_URL}/api/v1/runtime", timeout=10)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {json.dumps(response.json(), indent=2)}")
+    # Check settings object
+    if "settings" not in data:
+        print("❌ FAILED: Missing 'settings' object")
+        failed = True
+    else:
+        settings = data["settings"]
+        required_settings = ["derivMirrorEnabled", "tickRetentionDays", "candleRetentionDays"]
+        for key in required_settings:
+            if key not in settings:
+                print(f"❌ FAILED: Missing settings.{key}")
+                failed = True
+            else:
+                print(f"✅ settings.{key}: {settings[key]}")
     
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    data = response.json()
-    assert 'providers' in data, "Expected 'providers' field in response"
+    # Check deriv object
+    if "deriv" not in data:
+        print("❌ FAILED: Missing 'deriv' object")
+        failed = True
+    else:
+        deriv = data["deriv"]
+        required_deriv = ["ticks", "candles", "failed", "dropped", "lastFlush", "pendingTicks", "pendingCandles"]
+        for key in required_deriv:
+            if key not in deriv:
+                print(f"❌ FAILED: Missing deriv.{key}")
+                failed = True
+            else:
+                print(f"✅ deriv.{key}: {deriv[key]}")
     
-    providers = data['providers']
-    assert isinstance(providers, list), "Expected providers to be a list"
+    # Check observer object
+    if "observer" not in data:
+        print("❌ FAILED: Missing 'observer' object")
+        failed = True
+    else:
+        observer = data["observer"]
+        required_observer = ["ticks", "candles", "failed"]
+        for key in required_observer:
+            if key not in observer:
+                print(f"❌ FAILED: Missing observer.{key}")
+                failed = True
+            else:
+                print(f"✅ observer.{key}: {observer[key]}")
     
-    # Check for deriv provider
-    deriv_provider = None
-    observer_provider = None
+    # Check rows object
+    if "rows" not in data:
+        print("❌ FAILED: Missing 'rows' object")
+        failed = True
+    else:
+        rows = data["rows"]
+        if rows is None:
+            print("❌ FAILED: rows is null")
+            failed = True
+        else:
+            required_rows = ["deriv_ticks", "deriv_candles", "observer_ticks", "observer_candles"]
+            for key in required_rows:
+                if key not in rows:
+                    print(f"❌ FAILED: Missing rows.{key}")
+                    failed = True
+                else:
+                    print(f"✅ rows.{key}: {rows[key]}")
+            
+            # Record initial deriv_ticks count
+            initial_deriv_ticks = rows.get("deriv_ticks", 0)
+            initial_failed = data.get("deriv", {}).get("failed", 0)
+            
+            print(f"\n📊 Initial deriv_ticks: {initial_deriv_ticks}")
+            print(f"📊 Initial deriv.failed: {initial_failed}")
+            
+            # Wait 12 seconds for live stream to mirror data
+            print("\n⏳ Waiting 12 seconds for live Deriv stream to mirror data...")
+            time.sleep(12)
+            
+            # Second GET to verify increase
+            print("\n🔄 Fetching mirror status again...")
+            status2, body2 = curl_get("/v1/postgres/mirror")
+            
+            if status2 != 200:
+                print(f"❌ FAILED: Second GET returned {status2}")
+                return False
+            
+            try:
+                data2 = json.loads(body2)
+                rows2 = data2.get("rows", {})
+                new_deriv_ticks = rows2.get("deriv_ticks", 0)
+                new_failed = data2.get("deriv", {}).get("failed", 0)
+                
+                print(f"📊 New deriv_ticks: {new_deriv_ticks}")
+                print(f"📊 New deriv.failed: {new_failed}")
+                
+                if new_deriv_ticks > initial_deriv_ticks:
+                    print(f"✅ deriv_ticks increased by {new_deriv_ticks - initial_deriv_ticks} (live stream working)")
+                else:
+                    print(f"❌ FAILED: deriv_ticks did not increase (expected > {initial_deriv_ticks}, got {new_deriv_ticks})")
+                    failed = True
+                
+                if new_failed == initial_failed:
+                    print(f"✅ deriv.failed unchanged ({new_failed})")
+                else:
+                    print(f"⚠️  WARNING: deriv.failed changed from {initial_failed} to {new_failed}")
+                    
+            except json.JSONDecodeError as e:
+                print(f"❌ FAILED: Invalid JSON in second response: {e}")
+                return False
     
-    for provider in providers:
-        if provider.get('source') == 'deriv':
-            deriv_provider = provider
-        elif provider.get('source') == 'market-qx-observer-v2':
-            observer_provider = provider
+    if failed:
+        print("\n❌ TEST 1 FAILED")
+        return False
     
-    assert deriv_provider is not None, "Expected to find 'deriv' provider"
-    assert deriv_provider.get('state') in ['DATA_RECEIVING', 'CONNECTED'], \
-        f"Expected deriv state to be DATA_RECEIVING or CONNECTED, got {deriv_provider.get('state')}"
+    print("\n✅ TEST 1 PASSED")
+    return True
+
+def test_2_mirror_settings_update():
+    """Test 2: POST /api/v1/postgres/mirror - Settings update and validation"""
+    print("\n" + "="*80)
+    print("TEST 2: POST /api/v1/postgres/mirror - Settings Update")
+    print("="*80)
     
-    accepted_count = deriv_provider.get('acceptedCount', 0)
-    assert accepted_count >= 30, f"Expected acceptedCount >= 30, got {accepted_count}"
+    all_passed = True
     
-    # Check for observer provider
-    assert observer_provider is not None, "Expected to find 'market-qx-observer-v2' provider"
-    assert observer_provider.get('state') in ['WAITING_FOR_EXTENSION', 'DATA_RECEIVING', 'STALE'], \
-        f"Expected observer state to be WAITING_FOR_EXTENSION, DATA_RECEIVING, or STALE, got {observer_provider.get('state')}"
-
-test("3. Runtime Endpoint", test_runtime)
-
-# ============================================================================
-# TEST 4: Instruments Endpoint
-# ============================================================================
-def test_instruments():
-    """GET /api/v1/instruments → items non-empty"""
-    response = requests.get(f"{BACKEND_URL}/api/v1/instruments", timeout=10)
-    print(f"Status: {response.status_code}")
-    data = response.json()
-    print(f"Response: {json.dumps(data, indent=2)[:500]}...")  # Print first 500 chars
+    # Test 2a: Update tickRetentionDays to 9
+    print("\n--- Test 2a: Update tickRetentionDays to 9 ---")
+    status, body = curl_post("/v1/postgres/mirror", {"tickRetentionDays": 9})
+    print(f"Status: {status}")
     
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert 'items' in data, "Expected 'items' field in response"
-    assert isinstance(data['items'], list), "Expected items to be a list"
-    assert len(data['items']) > 0, "Expected items to be non-empty"
-    print(f"Found {len(data['items'])} instruments")
-
-test("4. Instruments Endpoint", test_instruments)
-
-# ============================================================================
-# TEST 5: Observation Endpoint
-# ============================================================================
-def test_observation():
-    """GET /api/v1/observation → returns source market-qx-observer-v2"""
-    response = requests.get(f"{BACKEND_URL}/api/v1/observation", timeout=10)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {json.dumps(response.json(), indent=2)}")
+    if status != 200:
+        print(f"❌ FAILED: Expected 200, got {status}")
+        print(f"Response: {body}")
+        all_passed = False
+    else:
+        try:
+            data = json.loads(body)
+            print(f"Response: {json.dumps(data, indent=2)}")
+            
+            if data.get("ok") != True:
+                print(f"❌ FAILED: ok is not true")
+                all_passed = False
+            else:
+                print(f"✅ ok: true")
+            
+            if data.get("settings", {}).get("tickRetentionDays") != 9:
+                print(f"❌ FAILED: tickRetentionDays not 9")
+                all_passed = False
+            else:
+                print(f"✅ settings.tickRetentionDays: 9")
+            
+            if data.get("persisted") != True:
+                print(f"❌ FAILED: persisted is not true")
+                all_passed = False
+            else:
+                print(f"✅ persisted: true")
+                
+        except json.JSONDecodeError as e:
+            print(f"❌ FAILED: Invalid JSON: {e}")
+            all_passed = False
     
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    data = response.json()
-    assert data.get('source') == 'market-qx-observer-v2', \
-        f"Expected source='market-qx-observer-v2', got {data.get('source')}"
-
-test("5. Observation Endpoint", test_observation)
-
-# ============================================================================
-# TEST 6: Observer Extension Contract - Check Endpoint
-# ============================================================================
-def test_observation_check_with_key():
-    """GET /api/v1/observation/check with header X-Market-QX-Key → 200 {ok:true}"""
-    headers = {'X-Market-QX-Key': OBSERVER_KEY}
-    response = requests.get(f"{BACKEND_URL}/api/v1/observation/check", headers=headers, timeout=10)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {json.dumps(response.json(), indent=2)}")
+    # Verify persistence with GET
+    print("\n--- Verify persistence with GET ---")
+    status, body = curl_get("/v1/postgres/mirror")
+    if status == 200:
+        try:
+            data = json.loads(body)
+            if data.get("settings", {}).get("tickRetentionDays") == 9:
+                print(f"✅ GET confirms tickRetentionDays: 9")
+            else:
+                print(f"❌ FAILED: GET shows tickRetentionDays: {data.get('settings', {}).get('tickRetentionDays')}")
+                all_passed = False
+        except json.JSONDecodeError:
+            pass
     
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    data = response.json()
-    assert data.get('ok') == True, f"Expected ok=true, got {data.get('ok')}"
-
-test("6a. Observation Check with Key", test_observation_check_with_key)
-
-def test_observation_check_without_key():
-    """GET /api/v1/observation/check without header → 401"""
-    response = requests.get(f"{BACKEND_URL}/api/v1/observation/check", timeout=10)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {response.text}")
+    # Test 2b: Update multiple settings with applyNow
+    print("\n--- Test 2b: Update multiple settings with applyNow ---")
+    payload = {
+        "tickRetentionDays": 7,
+        "candleRetentionDays": 30,
+        "derivMirrorEnabled": True,
+        "applyNow": True
+    }
+    status, body = curl_post("/v1/postgres/mirror", payload)
+    print(f"Status: {status}")
     
-    assert response.status_code == 401, f"Expected 401, got {response.status_code}"
+    if status != 200:
+        print(f"❌ FAILED: Expected 200, got {status}")
+        print(f"Response: {body}")
+        all_passed = False
+    else:
+        try:
+            data = json.loads(body)
+            print(f"Response: {json.dumps(data, indent=2)}")
+            
+            if "removed" not in data:
+                print(f"❌ FAILED: Missing 'removed' object")
+                all_passed = False
+            else:
+                removed = data["removed"]
+                if removed is None:
+                    print(f"⚠️  WARNING: removed is null (no rows to remove)")
+                else:
+                    required_keys = ["deriv_ticks", "deriv_candles", "observer_ticks", "observer_candles"]
+                    for key in required_keys:
+                        if key not in removed:
+                            print(f"❌ FAILED: Missing removed.{key}")
+                            all_passed = False
+                        else:
+                            print(f"✅ removed.{key}: {removed[key]}")
+        except json.JSONDecodeError as e:
+            print(f"❌ FAILED: Invalid JSON: {e}")
+            all_passed = False
+    
+    # Test 2c: Validation - tickRetentionDays = 0
+    print("\n--- Test 2c: Validation - tickRetentionDays = 0 (should fail) ---")
+    status, body = curl_post("/v1/postgres/mirror", {"tickRetentionDays": 0})
+    print(f"Status: {status}")
+    
+    if status != 422:
+        print(f"❌ FAILED: Expected 422, got {status}")
+        all_passed = False
+    else:
+        print(f"✅ Correctly rejected with 422")
+    
+    # Test 2d: Validation - candleRetentionDays = 5000
+    print("\n--- Test 2d: Validation - candleRetentionDays = 5000 (should fail) ---")
+    status, body = curl_post("/v1/postgres/mirror", {"candleRetentionDays": 5000})
+    print(f"Status: {status}")
+    
+    if status != 422:
+        print(f"❌ FAILED: Expected 422, got {status}")
+        all_passed = False
+    else:
+        print(f"✅ Correctly rejected with 422")
+    
+    # Test 2e: Validation - empty body
+    print("\n--- Test 2e: Validation - empty body (should fail) ---")
+    status, body = curl_post("/v1/postgres/mirror", {})
+    print(f"Status: {status}")
+    
+    if status != 422:
+        print(f"❌ FAILED: Expected 422, got {status}")
+        all_passed = False
+    else:
+        print(f"✅ Correctly rejected with 422")
+    
+    # Test 2f: Validation - unknown field
+    print("\n--- Test 2f: Validation - unknown field (should fail) ---")
+    status, body = curl_post("/v1/postgres/mirror", {"unknown": 1})
+    print(f"Status: {status}")
+    
+    if status != 422:
+        print(f"❌ FAILED: Expected 422, got {status}")
+        all_passed = False
+    else:
+        print(f"✅ Correctly rejected with 422")
+    
+    if all_passed:
+        print("\n✅ TEST 2 PASSED")
+    else:
+        print("\n❌ TEST 2 FAILED")
+    
+    return all_passed
 
-test("6b. Observation Check without Key", test_observation_check_without_key)
+def test_3_analytics_endpoint():
+    """Test 3: GET /api/v1/postgres/analytics - Analytics data"""
+    print("\n" + "="*80)
+    print("TEST 3: GET /api/v1/postgres/analytics - Analytics")
+    print("="*80)
+    
+    all_passed = True
+    
+    # Test 3a: GET with days=7
+    print("\n--- Test 3a: GET /api/v1/postgres/analytics?days=7 ---")
+    status, body = curl_get("/v1/postgres/analytics?days=7")
+    print(f"Status: {status}")
+    
+    if status != 200:
+        print(f"❌ FAILED: Expected 200, got {status}")
+        print(f"Response: {body}")
+        all_passed = False
+    else:
+        try:
+            data = json.loads(body)
+            print(f"Response keys: {list(data.keys())}")
+            
+            # Check required fields
+            if data.get("enabled") != True:
+                print(f"❌ FAILED: enabled is not true")
+                all_passed = False
+            else:
+                print(f"✅ enabled: true")
+            
+            if data.get("days") != 7:
+                print(f"❌ FAILED: days is not 7")
+                all_passed = False
+            else:
+                print(f"✅ days: 7")
+            
+            # Check pairs array
+            if "pairs" not in data:
+                print(f"❌ FAILED: Missing 'pairs' array")
+                all_passed = False
+            else:
+                pairs = data["pairs"]
+                print(f"✅ pairs array present with {len(pairs)} items")
+                
+                # Look for deriv rows
+                deriv_pairs = [p for p in pairs if p.get("source") == "deriv"]
+                observer_pairs = [p for p in pairs if p.get("source") == "market-qx-observer-v2"]
+                
+                print(f"  - Deriv pairs: {len(deriv_pairs)}")
+                print(f"  - Observer pairs: {len(observer_pairs)}")
+                
+                # Check for frxEURUSD with ticks and candles
+                eur_usd = next((p for p in deriv_pairs if "EUR" in p.get("symbol", "") and "USD" in p.get("symbol", "")), None)
+                if eur_usd:
+                    print(f"  - Found EUR/USD pair: {eur_usd}")
+                    if eur_usd.get("ticks", 0) > 0 and eur_usd.get("candles", 0) > 0:
+                        print(f"    ✅ EUR/USD has ticks ({eur_usd['ticks']}) and candles ({eur_usd['candles']})")
+                    else:
+                        print(f"    ⚠️  EUR/USD ticks={eur_usd.get('ticks')}, candles={eur_usd.get('candles')}")
+                else:
+                    print(f"  ⚠️  No EUR/USD pair found in deriv data")
+                
+                # Verify observer pairs have correct source
+                if observer_pairs:
+                    print(f"  ✅ Observer pairs present with source 'market-qx-observer-v2'")
+            
+            # Check daily array
+            if "daily" not in data:
+                print(f"❌ FAILED: Missing 'daily' array")
+                all_passed = False
+            else:
+                daily = data["daily"]
+                print(f"✅ daily array present with {len(daily)} items")
+                
+                # Check for today's date
+                today = datetime.utcnow().date().isoformat()
+                today_entry = next((d for d in daily if d.get("date") == today), None)
+                
+                if today_entry:
+                    print(f"  - Today's entry: {today_entry}")
+                    if today_entry.get("derivTicks", 0) > 0:
+                        print(f"    ✅ Today has derivTicks: {today_entry['derivTicks']}")
+                    else:
+                        print(f"    ⚠️  Today's derivTicks: {today_entry.get('derivTicks', 0)}")
+                else:
+                    print(f"  ⚠️  No entry for today ({today})")
+            
+            # Check totals object
+            if "totals" not in data:
+                print(f"❌ FAILED: Missing 'totals' object")
+                all_passed = False
+            else:
+                totals = data["totals"]
+                print(f"✅ totals: {totals}")
+            
+            # Check mirror.settings
+            if "mirror" not in data or "settings" not in data.get("mirror", {}):
+                print(f"❌ FAILED: Missing mirror.settings")
+                all_passed = False
+            else:
+                print(f"✅ mirror.settings present: {data['mirror']['settings']}")
+                
+        except json.JSONDecodeError as e:
+            print(f"❌ FAILED: Invalid JSON: {e}")
+            all_passed = False
+    
+    # Test 3b: GET with days=1
+    print("\n--- Test 3b: GET /api/v1/postgres/analytics?days=1 ---")
+    status, body = curl_get("/v1/postgres/analytics?days=1")
+    print(f"Status: {status}")
+    
+    if status != 200:
+        print(f"❌ FAILED: Expected 200, got {status}")
+        all_passed = False
+    else:
+        try:
+            data = json.loads(body)
+            if data.get("days") == 1:
+                print(f"✅ days=1 accepted")
+            else:
+                print(f"❌ FAILED: days is {data.get('days')}, expected 1")
+                all_passed = False
+        except json.JSONDecodeError:
+            pass
+    
+    # Test 3c: GET with days=30
+    print("\n--- Test 3c: GET /api/v1/postgres/analytics?days=30 ---")
+    status, body = curl_get("/v1/postgres/analytics?days=30")
+    print(f"Status: {status}")
+    
+    if status != 200:
+        print(f"❌ FAILED: Expected 200, got {status}")
+        all_passed = False
+    else:
+        try:
+            data = json.loads(body)
+            if data.get("days") == 30:
+                print(f"✅ days=30 accepted")
+            else:
+                print(f"❌ FAILED: days is {data.get('days')}, expected 30")
+                all_passed = False
+        except json.JSONDecodeError:
+            pass
+    
+    # Test 3d: Validation - days=0
+    print("\n--- Test 3d: Validation - days=0 (should fail) ---")
+    status, body = curl_get("/v1/postgres/analytics?days=0")
+    print(f"Status: {status}")
+    
+    if status != 422:
+        print(f"❌ FAILED: Expected 422, got {status}")
+        all_passed = False
+    else:
+        print(f"✅ Correctly rejected with 422")
+    
+    # Test 3e: Validation - days=91
+    print("\n--- Test 3e: Validation - days=91 (should fail) ---")
+    status, body = curl_get("/v1/postgres/analytics?days=91")
+    print(f"Status: {status}")
+    
+    if status != 422:
+        print(f"❌ FAILED: Expected 422, got {status}")
+        all_passed = False
+    else:
+        print(f"✅ Correctly rejected with 422")
+    
+    if all_passed:
+        print("\n✅ TEST 3 PASSED")
+    else:
+        print("\n❌ TEST 3 FAILED")
+    
+    return all_passed
 
-# ============================================================================
-# TEST 7: Observer Extension Contract - Pairs Endpoint
-# ============================================================================
-def test_observation_pairs():
-    """POST /api/v1/observation/pairs with key and valid body → 200 ok"""
-    headers = {'X-Market-QX-Key': OBSERVER_KEY, 'Content-Type': 'application/json'}
-    body = {
-        "source": "MARKET_QX_BROWSER_OBSERVATION",
-        "schema_version": 2,
-        "session_id": "test-sess-1",
-        "dedupe_id": f"pairs-{uuid4()}",
-        "observationMethod": "visible-dom-only",
-        "pairs": [
-            {
-                "symbol": "EURUSD_otc",
-                "providerSymbol": "EURUSD_otc",
-                "timeframe": "1m"
+def test_4_regression_tests():
+    """Test 4: Regression tests for existing endpoints"""
+    print("\n" + "="*80)
+    print("TEST 4: Regression Tests")
+    print("="*80)
+    
+    all_passed = True
+    
+    # Test 4a: GET /api/health
+    print("\n--- Test 4a: GET /api/health ---")
+    status, body = curl_get("/health")
+    print(f"Status: {status}")
+    
+    if status != 200:
+        print(f"❌ FAILED: Expected 200, got {status}")
+        all_passed = False
+    else:
+        try:
+            data = json.loads(body)
+            print(f"Response keys: {list(data.keys())}")
+            
+            # Check postgres.state
+            postgres = data.get("postgres", {})
+            if postgres.get("state") != "CONNECTED":
+                print(f"❌ FAILED: postgres.state is {postgres.get('state')}, expected CONNECTED")
+                all_passed = False
+            else:
+                print(f"✅ postgres.state: CONNECTED")
+            
+            # Check postgres.mirror.rows
+            mirror = postgres.get("mirror", {})
+            rows = mirror.get("rows", {})
+            
+            if not rows:
+                print(f"❌ FAILED: postgres.mirror.rows is empty or missing")
+                all_passed = False
+            else:
+                required_keys = ["deriv_ticks", "deriv_candles", "observer_ticks", "observer_candles"]
+                for key in required_keys:
+                    if key not in rows:
+                        print(f"❌ FAILED: Missing postgres.mirror.rows.{key}")
+                        all_passed = False
+                    else:
+                        print(f"✅ postgres.mirror.rows.{key}: {rows[key]}")
+            
+            # Check postgres.mirror.settings
+            if "settings" not in mirror:
+                print(f"❌ FAILED: Missing postgres.mirror.settings")
+                all_passed = False
+            else:
+                print(f"✅ postgres.mirror.settings present: {mirror['settings']}")
+                
+        except json.JSONDecodeError as e:
+            print(f"❌ FAILED: Invalid JSON: {e}")
+            all_passed = False
+    
+    # Test 4b: GET /api/v1/runtime
+    print("\n--- Test 4b: GET /api/v1/runtime ---")
+    status, body = curl_get("/v1/runtime")
+    print(f"Status: {status}")
+    
+    if status != 200:
+        print(f"❌ FAILED: Expected 200, got {status}")
+        all_passed = False
+    else:
+        try:
+            data = json.loads(body)
+            
+            # Find deriv provider
+            providers = data.get("providers", [])
+            deriv = next((p for p in providers if p.get("source") == "deriv"), None)
+            
+            if not deriv:
+                print(f"❌ FAILED: No deriv provider found")
+                all_passed = False
+            else:
+                if deriv.get("state") != "DATA_RECEIVING":
+                    print(f"❌ FAILED: deriv state is {deriv.get('state')}, expected DATA_RECEIVING")
+                    all_passed = False
+                else:
+                    print(f"✅ deriv.state: DATA_RECEIVING")
+                
+                accepted_count = deriv.get("acceptedCount", 0)
+                if accepted_count < 30:
+                    print(f"❌ FAILED: deriv.acceptedCount is {accepted_count}, expected >= 30")
+                    all_passed = False
+                else:
+                    print(f"✅ deriv.acceptedCount: {accepted_count} (>= 30)")
+                    
+        except json.JSONDecodeError as e:
+            print(f"❌ FAILED: Invalid JSON: {e}")
+            all_passed = False
+    
+    # Test 4c: Observer /check endpoint without key (should fail)
+    print("\n--- Test 4c: GET /api/v1/observation/check without key (should fail) ---")
+    status, body = curl_get("/v1/observation/check")
+    print(f"Status: {status}")
+    
+    if status != 401:
+        print(f"❌ FAILED: Expected 401, got {status}")
+        all_passed = False
+    else:
+        print(f"✅ Correctly rejected with 401")
+    
+    # Test 4d: Observer /check endpoint with key (should succeed)
+    print("\n--- Test 4d: GET /api/v1/observation/check with key (should succeed) ---")
+    status, body = curl_get("/v1/observation/check", headers={"X-Market-QX-Key": OBSERVER_KEY})
+    print(f"Status: {status}")
+    
+    if status != 200:
+        print(f"❌ FAILED: Expected 200, got {status}")
+        all_passed = False
+    else:
+        print(f"✅ Authenticated successfully with 200")
+    
+    # Test 4e: POST observer tick and verify mirror increase
+    print("\n--- Test 4e: POST /api/v1/observation/tick and verify mirror increase ---")
+    
+    # Get initial count
+    status, body = curl_get("/v1/postgres/mirror")
+    if status == 200:
+        try:
+            data = json.loads(body)
+            initial_observer_ticks = data.get("rows", {}).get("observer_ticks", 0)
+            print(f"Initial observer_ticks: {initial_observer_ticks}")
+            
+            # Post a tick
+            now = datetime.utcnow().isoformat() + "Z"
+            session_id = f"test-session-{int(time.time())}"
+            dedupe_id = f"test-dedupe-{int(time.time() * 1000)}"
+            
+            tick_payload = {
+                "source": "MARKET_QX_BROWSER_OBSERVATION",
+                "schema_version": 2,
+                "session_id": session_id,
+                "dedupe_id": dedupe_id,
+                "symbol": "EUR/USD (OTC)",
+                "price": 1.0850,
+                "timestamp": now
             }
-        ]
-    }
+            
+            status, body = curl_post("/v1/observation/tick", tick_payload, headers={"X-Market-QX-Key": OBSERVER_KEY})
+            print(f"POST tick status: {status}")
+            
+            if status != 200:
+                print(f"❌ FAILED: POST tick returned {status}")
+                print(f"Response: {body}")
+                all_passed = False
+            else:
+                print(f"✅ Tick posted successfully")
+                
+                # Wait 2 seconds for mirror
+                print("⏳ Waiting 2 seconds for mirror...")
+                time.sleep(2)
+                
+                # Check new count
+                status, body = curl_get("/v1/postgres/mirror")
+                if status == 200:
+                    try:
+                        data = json.loads(body)
+                        new_observer_ticks = data.get("rows", {}).get("observer_ticks", 0)
+                        print(f"New observer_ticks: {new_observer_ticks}")
+                        
+                        if new_observer_ticks == initial_observer_ticks + 1:
+                            print(f"✅ observer_ticks increased by 1")
+                        else:
+                            print(f"❌ FAILED: observer_ticks expected {initial_observer_ticks + 1}, got {new_observer_ticks}")
+                            all_passed = False
+                    except json.JSONDecodeError:
+                        pass
+        except json.JSONDecodeError:
+            pass
     
-    response = requests.post(f"{BACKEND_URL}/api/v1/observation/pairs", 
-                            headers=headers, json=body, timeout=10)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {json.dumps(response.json(), indent=2)}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    data = response.json()
-    assert data.get('ok') == True, f"Expected ok=true, got {data.get('ok')}"
-
-test("7. Observation Pairs", test_observation_pairs)
-
-# ============================================================================
-# TEST 8: Observer Extension Contract - Tick Endpoint
-# ============================================================================
-def test_observation_tick():
-    """POST /api/v1/observation/tick with key → 200"""
-    headers = {'X-Market-QX-Key': OBSERVER_KEY, 'Content-Type': 'application/json'}
-    
-    # First tick with unique dedupe_id
-    dedupe_id = f"tick-{uuid4()}"
-    body = {
-        "source": "MARKET_QX_BROWSER_OBSERVATION",
-        "schema_version": 2,
-        "session_id": "test-sess-1",
-        "dedupe_id": dedupe_id,
-        "observationMethod": "visible-dom-only",
-        "symbol": "EURUSD_otc",
-        "providerSymbol": "EURUSD_otc",
-        "price": 1.08512,
-        "timeframe": "tick",
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }
-    
-    response = requests.post(f"{BACKEND_URL}/api/v1/observation/tick", 
-                            headers=headers, json=body, timeout=10)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {json.dumps(response.json(), indent=2)}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    data = response.json()
-    assert data.get('ok') == True, f"Expected ok=true, got {data.get('ok')}"
-    assert data.get('duplicate') == False, f"Expected duplicate=false for first tick, got {data.get('duplicate')}"
-    
-    # Second tick with same dedupe_id should return duplicate=true
-    time.sleep(0.5)
-    response2 = requests.post(f"{BACKEND_URL}/api/v1/observation/tick", 
-                             headers=headers, json=body, timeout=10)
-    print(f"\nDuplicate test - Status: {response2.status_code}")
-    print(f"Response: {json.dumps(response2.json(), indent=2)}")
-    
-    assert response2.status_code == 200, f"Expected 200 for duplicate, got {response2.status_code}"
-    data2 = response2.json()
-    assert data2.get('duplicate') == True, f"Expected duplicate=true for second tick, got {data2.get('duplicate')}"
-
-test("8. Observation Tick with Deduplication", test_observation_tick)
-
-# ============================================================================
-# TEST 9: Observer Download Endpoint
-# ============================================================================
-def test_observer_download():
-    """GET /api/v1/observer/download → 200 application/zip containing manifest.json"""
-    response = requests.get(f"{BACKEND_URL}/api/v1/observer/download", timeout=10)
-    print(f"Status: {response.status_code}")
-    print(f"Content-Type: {response.headers.get('Content-Type')}")
-    print(f"Content-Length: {len(response.content)} bytes")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert 'application/zip' in response.headers.get('Content-Type', ''), \
-        f"Expected Content-Type to contain 'application/zip', got {response.headers.get('Content-Type')}"
-    
-    # Verify it's a valid zip file
-    zip_buffer = BytesIO(response.content)
-    with zipfile.ZipFile(zip_buffer, 'r') as zip_file:
-        file_list = zip_file.namelist()
-        print(f"Files in zip: {file_list}")
-        
-        assert 'market-qx-observer-v2/manifest.json' in file_list, \
-            "Expected manifest.json in zip"
-        
-        # Read and verify manifest
-        manifest_content = zip_file.read('market-qx-observer-v2/manifest.json')
-        manifest = json.loads(manifest_content)
-        print(f"Manifest optional_host_permissions: {manifest.get('optional_host_permissions')}")
-        
-        expected_permission = f"{BACKEND_URL}/*"
-        assert expected_permission in manifest.get('optional_host_permissions', []), \
-            f"Expected {expected_permission} in optional_host_permissions"
-
-test("9. Observer Download", test_observer_download)
-
-# ============================================================================
-# TEST 10: Market Routes - Analysis Latest
-# ============================================================================
-def test_analysis_latest():
-    """GET /api/v1/analysis/latest → 200"""
-    # Get an instrument first
-    instruments_response = requests.get(f"{BACKEND_URL}/api/v1/instruments", timeout=10)
-    instruments = instruments_response.json()['items']
-    
-    if len(instruments) > 0:
-        instrument = instruments[0]
-        source = instrument['source']
-        symbol = instrument['symbol']
-        
-        response = requests.get(f"{BACKEND_URL}/api/v1/analysis/latest", 
-                               params={'source': source, 'symbol': symbol, 'timeframe': '1m'}, 
-                               timeout=10)
-        print(f"Status: {response.status_code}")
-        print(f"Response: {json.dumps(response.json(), indent=2)[:500]}...")
-        
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    if all_passed:
+        print("\n✅ TEST 4 PASSED")
     else:
-        print("No instruments available, skipping test")
-
-test("10. Analysis Latest", test_analysis_latest)
-
-# ============================================================================
-# TEST 11: Market Routes - Top Pairs
-# ============================================================================
-def test_top_pairs():
-    """GET /api/v1/top-pairs → 200"""
-    response = requests.get(f"{BACKEND_URL}/api/v1/top-pairs", timeout=10)
-    print(f"Status: {response.status_code}")
-    data = response.json()
-    print(f"Response: {json.dumps(data, indent=2)[:500]}...")
+        print("\n❌ TEST 4 FAILED")
     
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert 'items' in data, "Expected 'items' field in response"
+    return all_passed
 
-test("11. Top Pairs", test_top_pairs)
-
-# ============================================================================
-# TEST 12: Market Routes - History
-# ============================================================================
-def test_history():
-    """GET /api/v1/history → 200"""
-    response = requests.get(f"{BACKEND_URL}/api/v1/history", timeout=10)
-    print(f"Status: {response.status_code}")
-    data = response.json()
-    print(f"Response: {json.dumps(data, indent=2)[:500]}...")
+def test_5_settings_persistence():
+    """Test 5: Verify settings persistence in MongoDB"""
+    print("\n" + "="*80)
+    print("TEST 5: Settings Persistence in MongoDB")
+    print("="*80)
     
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert 'items' in data, "Expected 'items' field in response"
-
-test("12. History", test_history)
-
-# ============================================================================
-# TEST 13: Market Routes - Events
-# ============================================================================
-def test_events():
-    """GET /api/v1/events → 200"""
-    response = requests.get(f"{BACKEND_URL}/api/v1/events", timeout=10)
-    print(f"Status: {response.status_code}")
-    data = response.json()
-    print(f"Response: {json.dumps(data, indent=2)[:500]}...")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert 'items' in data, "Expected 'items' field in response"
-
-test("13. Events", test_events)
-
-# ============================================================================
-# TEST 14: Market Routes - Agents
-# ============================================================================
-def test_agents():
-    """GET /api/v1/agents → 200"""
-    response = requests.get(f"{BACKEND_URL}/api/v1/agents", timeout=10)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {json.dumps(response.json(), indent=2)}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-
-test("14. Agents", test_agents)
-
-# ============================================================================
-# TEST 15: Market Routes - Modules
-# ============================================================================
-def test_modules():
-    """GET /api/v1/modules → 200"""
-    response = requests.get(f"{BACKEND_URL}/api/v1/modules", timeout=10)
-    print(f"Status: {response.status_code}")
-    data = response.json()
-    print(f"Response: {json.dumps(data, indent=2)}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert 'items' in data, "Expected 'items' field in response"
-
-test("15. Modules", test_modules)
-
-# ============================================================================
-# TEST 16: Market Routes - POST Analysis
-# ============================================================================
-def test_post_analysis():
-    """POST /api/v1/analysis → 200"""
-    # Get an instrument first
-    instruments_response = requests.get(f"{BACKEND_URL}/api/v1/instruments", timeout=10)
-    instruments = instruments_response.json()['items']
-    
-    if len(instruments) > 0:
-        instrument = instruments[0]
-        body = {
-            "source": instrument['source'],
-            "symbol": instrument['symbol'],
-            "timeframe": "1m"
-        }
+    try:
+        from pymongo import MongoClient
         
-        response = requests.post(f"{BACKEND_URL}/api/v1/analysis", 
-                                json=body, timeout=10)
-        print(f"Status: {response.status_code}")
-        print(f"Response: {json.dumps(response.json(), indent=2)[:500]}...")
+        mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+        db_name = os.environ.get("DB_NAME", "test_database")
         
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+        print(f"Connecting to MongoDB: {mongo_url}")
+        print(f"Database: {db_name}")
+        
+        client = MongoClient(mongo_url, serverSelectionTimeoutMS=5000)
+        db = client[db_name]
+        
+        # Find the postgres_mirror settings document
+        doc = db.runtime_settings.find_one({"id": "postgres_mirror"})
+        
+        if not doc:
+            print(f"❌ FAILED: No document found with id='postgres_mirror'")
+            return False
+        
+        print(f"✅ Found document: {doc}")
+        
+        # Verify tickRetentionDays is 7 (from test 2)
+        if doc.get("tickRetentionDays") == 7:
+            print(f"✅ tickRetentionDays: 7 (persisted correctly)")
+        else:
+            print(f"❌ FAILED: tickRetentionDays is {doc.get('tickRetentionDays')}, expected 7")
+            return False
+        
+        print("\n✅ TEST 5 PASSED")
+        return True
+        
+    except Exception as e:
+        print(f"❌ FAILED: MongoDB check failed: {e}")
+        return False
+
+def main():
+    """Run all tests"""
+    print("="*80)
+    print("BACKEND TESTING: PostgreSQL Mirror Features")
+    print("Master Candle FastAPI App")
+    print("="*80)
+    print(f"Backend URL: {BACKEND_URL}")
+    print(f"Observer Key: {OBSERVER_KEY[:20]}...")
+    
+    results = []
+    
+    # Run all tests
+    results.append(("Test 1: Mirror Status & Live Stream", test_1_mirror_status_and_live_stream()))
+    results.append(("Test 2: Settings Update", test_2_mirror_settings_update()))
+    results.append(("Test 3: Analytics Endpoint", test_3_analytics_endpoint()))
+    results.append(("Test 4: Regression Tests", test_4_regression_tests()))
+    results.append(("Test 5: Settings Persistence", test_5_settings_persistence()))
+    
+    # Summary
+    print("\n" + "="*80)
+    print("TEST SUMMARY")
+    print("="*80)
+    
+    passed = sum(1 for _, result in results if result)
+    total = len(results)
+    
+    for name, result in results:
+        status = "✅ PASSED" if result else "❌ FAILED"
+        print(f"{status}: {name}")
+    
+    print(f"\nTotal: {passed}/{total} tests passed ({passed*100//total}%)")
+    
+    if passed == total:
+        print("\n🎉 ALL TESTS PASSED!")
+        return 0
     else:
-        print("No instruments available, skipping test")
+        print(f"\n⚠️  {total - passed} test(s) failed")
+        return 1
 
-test("16. POST Analysis", test_post_analysis)
-
-# ============================================================================
-# TEST 17: Demo Ledger - Session Creation
-# ============================================================================
-def test_demo_session():
-    """POST /api/v1/demo/session → 200 with cookie"""
-    session = requests.Session()
-    response = session.post(f"{BACKEND_URL}/api/v1/demo/session", timeout=10)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {json.dumps(response.json(), indent=2)}")
-    print(f"Cookies: {session.cookies.get_dict()}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    data = response.json()
-    assert 'balanceCents' in data, "Expected 'balanceCents' field in response"
-    assert data['balanceCents'] == 1_000_000, f"Expected initial balance 1000000, got {data['balanceCents']}"
-    assert 'mc_demo_session' in session.cookies, "Expected mc_demo_session cookie to be set"
-    
-    return session
-
-demo_session = None
-test("17. Demo Session Creation", lambda: globals().update({'demo_session': test_demo_session()}))
-
-# ============================================================================
-# TEST 18: Demo Ledger - Get Account
-# ============================================================================
-def test_demo_account():
-    """GET /api/v1/demo/account → 200"""
-    if demo_session is None:
-        print("Skipping: demo session not created")
-        return
-    
-    response = demo_session.get(f"{BACKEND_URL}/api/v1/demo/account", timeout=10)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {json.dumps(response.json(), indent=2)}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    data = response.json()
-    assert 'balanceCents' in data, "Expected 'balanceCents' field in response"
-
-test("18. Demo Account", test_demo_account)
-
-# ============================================================================
-# TEST 19: Demo Ledger - Place Trade
-# ============================================================================
-def test_demo_place_trade():
-    """POST /api/v1/demo/actions (place trade) → 200"""
-    if demo_session is None:
-        print("Skipping: demo session not created")
-        return
-    
-    body = {
-        "requestId": str(uuid4()),
-        "kind": "place",
-        "pairId": "frxEURUSD",
-        "direction": "UP",
-        "stakeCents": 10000,
-        "duration": 60
-    }
-    
-    response = demo_session.post(f"{BACKEND_URL}/api/v1/demo/actions", 
-                                json=body, timeout=10)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {json.dumps(response.json(), indent=2)}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    data = response.json()
-    assert 'balanceCents' in data, "Expected 'balanceCents' field in response"
-    assert 'trades' in data, "Expected 'trades' field in response"
-
-test("19. Demo Place Trade", test_demo_place_trade)
-
-# ============================================================================
-# TEST 20: Demo Ledger - History
-# ============================================================================
-def test_demo_history():
-    """GET /api/v1/demo/history → 200"""
-    if demo_session is None:
-        print("Skipping: demo session not created")
-        return
-    
-    response = demo_session.get(f"{BACKEND_URL}/api/v1/demo/history", timeout=10)
-    print(f"Status: {response.status_code}")
-    data = response.json()
-    print(f"Response: {json.dumps(data, indent=2)[:500]}...")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert 'items' in data, "Expected 'items' field in response"
-
-test("20. Demo History", test_demo_history)
-
-# ============================================================================
-# TEST 21: Demo Ledger - Reset
-# ============================================================================
-def test_demo_reset():
-    """POST /api/v1/demo/actions (reset) → 200"""
-    if demo_session is None:
-        print("Skipping: demo session not created")
-        return
-    
-    body = {
-        "requestId": str(uuid4()),
-        "kind": "reset"
-    }
-    
-    response = demo_session.post(f"{BACKEND_URL}/api/v1/demo/actions", 
-                                json=body, timeout=10)
-    print(f"Status: {response.status_code}")
-    print(f"Response: {json.dumps(response.json(), indent=2)}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    data = response.json()
-    assert data['balanceCents'] == 1_000_000, f"Expected balance reset to 1000000, got {data['balanceCents']}"
-
-test("21. Demo Reset", test_demo_reset)
-
-# ============================================================================
-# SUMMARY
-# ============================================================================
-print("\n" + "=" * 80)
-print("TEST SUMMARY")
-print("=" * 80)
-
-passed = sum(1 for _, result in test_results if result == "PASS")
-failed = sum(1 for _, result in test_results if result in ["FAIL", "ERROR"])
-total = len(test_results)
-
-print(f"\nTotal Tests: {total}")
-print(f"Passed: {passed}")
-print(f"Failed: {failed}")
-print(f"Success Rate: {passed/total*100:.1f}%")
-
-if failed_tests:
-    print("\n" + "=" * 80)
-    print("FAILED TESTS DETAILS")
-    print("=" * 80)
-    for name, error in failed_tests:
-        print(f"\n❌ {name}")
-        print(f"   {error}")
-
-print("\n" + "=" * 80)
+if __name__ == "__main__":
+    sys.exit(main())

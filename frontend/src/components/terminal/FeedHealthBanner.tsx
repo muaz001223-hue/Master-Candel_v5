@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, X, RefreshCw, WifiOff } from 'lucide-react';
 import { useRuntime } from '@/hooks/useMarketBackend';
+import { deliverFeedAlert } from '@/lib/feedAlerts';
 
 // Feed freshness policy shared with the backend (MARKET_FRESHNESS_SECONDS = 30).
 const STALE_SECONDS = 30;
@@ -40,6 +41,17 @@ export default function FeedHealthBanner() {
   // whenever a different feed goes stale (no effect needed: an empty signature is never shown).
   const [dismissed, setDismissed] = useState<string | null>(null);
   const signature = alerts.map(a => a.key).join('|');
+  const headline = alerts.map(a => a.title).join(' \u00b7 ');
+  const detail = alerts.map(a => a.detail).join(' ');
+  // Play the soft chime / browser notification once per new set of failing feeds
+  // (delivery happens outside render; preferences are read from localStorage).
+  const announced = useRef<string>('');
+  useEffect(() => {
+    if (!signature) { announced.current = ''; return; }
+    if (announced.current === signature) return;
+    announced.current = signature;
+    void deliverFeedAlert(`Master Candle \u00b7 ${headline}`, detail);
+  }, [signature, headline, detail]);
   if (!alerts.length || dismissed === signature) return null;
   const tone = alerts.some(a => a.tone === 'error') ? 'error' : 'warn';
   return (

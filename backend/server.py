@@ -21,6 +21,7 @@ from observation_routes import observation_router
 from extension_download import router as download_router
 from demo_routes import demo_router
 from postgres_service import PostgresService
+from postgres_routes import postgres_router
 
 client = AsyncIOMotorClient(os.environ['MONGO_URL'], serverSelectionTimeoutMS=5000)
 db = client[os.environ['DB_NAME']]
@@ -28,12 +29,16 @@ store = MarketStore(db)
 deriv = DerivService(store)
 analysis = AnalysisService(store)
 postgres = PostgresService()
+store.mirror = postgres
 
 
 @asynccontextmanager
 async def lifespan(app):
     await store.initialize()
     await store.event('INFO', 'Main Server Core', 'MongoDB connected · analytical ingestion ready')
+    saved = await db.runtime_settings.find_one({'id': 'postgres_mirror'}, {'_id': 0, 'id': 0})
+    if saved:
+        postgres.update_settings(**saved)
     await postgres.connect()
     if postgres.enabled:
         await store.event('INFO' if postgres.state == 'CONNECTED' else 'WARN', 'Main Server Core', f'PostgreSQL {postgres.state}')
@@ -57,6 +62,7 @@ app.include_router(market_router(store, deriv, analysis))
 app.include_router(observation_router(store, postgres))
 app.include_router(download_router)
 app.include_router(demo_router(db))
+app.include_router(postgres_router(db, postgres))
 
 
 @app.get('/api/health')

@@ -94,3 +94,9 @@ Connect authorized observer tab, collect missing agent source, then scope datase
 - Feed health banner: `components/terminal/FeedHealthBanner.tsx` mounted in `App.tsx`; shows when Deriv/observer `STALE` (>30s) or backend unreachable; dismiss + re-check.
 - `/api/v1/observation` now returns `ageSeconds` + `freshnessSeconds`.
 - Tests: pytest 27/27, backend agent 14/14, frontend agent 6/6 scenarios (desktop + 390px mobile).
+
+## Iteration 3
+- Deriv Postgres mirror: `deriv_ticks` / `deriv_candles` (all timeframes; tick-derived buckets aggregated in memory, provider OHLC wins), batched flush every `POSTGRES_MIRROR_FLUSH_SECONDS` (5s); retention `POSTGRES_MIRROR_TICK_RETENTION_DAYS` (7) / `POSTGRES_MIRROR_CANDLE_RETENTION_DAYS` (30), hourly cleanup, runtime override persisted in Mongo `runtime_settings` (`postgres_mirror`).
+- API: `GET/POST /api/v1/postgres/mirror`, `GET /api/v1/postgres/analytics?days=1..90` (`backend/postgres_routes.py`).
+- UI: `/analytics` → PostgresAnalytics card (daily recharts bar chart, per-pair table, source filter, 1d/7d/30d); `/settings` → MirrorSettings (toggle + retention days + Save / Save & clean now) and AlertPreferences (soft chime, volume, browser notification permission, test alert). `lib/feedAlerts.ts` handles Web Audio chime + Notification; FeedHealthBanner fires once per new stale set.
+- Backend agent 5/5 pass. Frontend automated testing of the new cards not yet run (ask user).

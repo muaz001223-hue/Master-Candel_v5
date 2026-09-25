@@ -4,7 +4,7 @@ import os
 DERIV_URL = os.environ['DERIV_WS_URL']
 DERIV_ENABLED = os.environ['DERIV_ENABLED'].lower() == 'true'
 DERIV_SYMBOLS = [s.strip() for s in os.environ['DERIV_SYMBOLS'].split(',') if s.strip()]
-TIMEFRAMES = {v: int(v[:-1]) * (60 if v[-1] == 'm' else 1) for v in os.environ['MARKET_TIMEFRAMES'].split(',')}
+TIMEFRAMES = {v: int(v[:-1]) * {'s': 1, 'm': 60, 'h': 3600}[v[-1]] for v in os.environ['MARKET_TIMEFRAMES'].split(',')}
 FRESHNESS = int(os.environ['MARKET_FRESHNESS_SECONDS'])
 INGEST_HASH = os.environ['INGESTION_KEY_SHA256']
 PUBLIC_URL = os.environ['PUBLIC_APP_URL']

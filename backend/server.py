@@ -22,6 +22,8 @@ from extension_download import router as download_router
 from demo_routes import demo_router
 from postgres_service import PostgresService
 from postgres_routes import postgres_router
+from signal_service import SignalService
+from signal_routes import signal_router
 
 client = AsyncIOMotorClient(os.environ['MONGO_URL'], serverSelectionTimeoutMS=5000)
 db = client[os.environ['DB_NAME']]
@@ -30,6 +32,7 @@ deriv = DerivService(store)
 analysis = AnalysisService(store)
 postgres = PostgresService()
 store.mirror = postgres
+signals = SignalService(store, deriv if DERIV_ENABLED else None)
 
 
 @asynccontextmanager
@@ -42,6 +45,9 @@ async def lifespan(app):
     await postgres.connect()
     if postgres.enabled:
         await store.event('INFO' if postgres.state == 'CONNECTED' else 'WARN', 'Main Server Core', f'PostgreSQL {postgres.state}')
+    await signals.load_settings()
+    signals.start()
+    await store.event('INFO', 'Signal Engine', f"Confluence engine armed · threshold {signals.settings['threshold']}% · {', '.join(signals.settings['timeframes'])}")
     tasks = [asyncio.create_task(analysis.run())]
     if DERIV_ENABLED:
         tasks.append(asyncio.create_task(deriv.run()))
@@ -51,6 +57,7 @@ async def lifespan(app):
     for task in tasks:
         with suppress(asyncio.CancelledError):
             await task
+    await signals.stop()
     await analysis.stop_worker()
     await postgres.close()
     client.close()
@@ -63,6 +70,7 @@ app.include_router(observation_router(store, postgres))
 app.include_router(download_router)
 app.include_router(demo_router(db))
 app.include_router(postgres_router(db, postgres))
+app.include_router(signal_router(store, deriv if DERIV_ENABLED else None, signals))
 
 
 @app.get('/api/health')
